@@ -1,12 +1,14 @@
 """
 Author: Joe King
-Date: 11 Sept. 2019
+Date: 5 Feb. 2020
 
-    Script cleans and manipulates original fault data (blackhawks only) and outputs to CSV.
+    Script cleans and manipulates original fault data (blackhawks only) and outputs to CSV. Original files are
+    saved separately by calendar year, a format this script preserves.
+
+    However, '2017-2019 new fault data.csv' comprises multiple years of newer fault data, which was combined
+    in the script '0_append_newfault_data.py'.
     
 """
-
-
 
 import pandas as pd
 import numpy as np
@@ -17,31 +19,27 @@ pd.options.mode.chained_assignment = None # turns of SettingWithCopyWarning
 warnings.simplefilter(action='ignore',category=FutureWarning)
 
 
-def main(input_dir, dataframe, min_date_cutoff=None, max_date_cutoff=None, counts=True):
+def main(input_dir, dataframe, min_date_cutoff=None, max_date_cutoff=None):
     '''
     Function cleans a given dataframe and outputs to CSV file. This includes:
         1) dropping sparse or non-relevent seeming columns, and renaming columns; 
         2) dropping duplicate records on 'KEY13';
         3) formatting dates;
-        4) dropping records with missing start date; 
-        5) dropping records whose start date was before the minimum and/or maximum date cut-off; 
-        6) misc formatting to variables;
-        7) creating a record status variable for the status associated with that fault record;
+        4) dropping records with missing start and/or end date;
+        5) dropping records whose start date was before the minimum and/or maximum date cut-off;
+        6) dropping records where end date before start date;
+        7) dropping records missing serial number;
+        8) misc formatting to variables;
+        9) creating a record status variable for the status associated with that fault record;
     
     :input_dir: str, path to original data
     :dataframe: str, name of CSV to process
     :min_date_cutoff: YYYY-MM-DD date to exclude faults before
     :max_date_cutoff: YYYY-MM-DD date to exclude faults after
-    :counts: bool, outputs record counts of unduplicated faults
         
     '''
     print("\nBeginning curation of '{}'.".format(dataframe))
     df = pd.read_csv(os.path.join(input_dir, dataframe), index_col=None)
-    
-    # Where output final product
-    output_dir = os.path.join(r'X:\Pechacek\ARNG Aircraft Readiness\Data\Processed\Master fault data intermediate', os.path.split(input_dir)[-1])
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
     
     ####################################################################
     ##### RENAMING, DROPPING USELESS COLS & ROWS, FORMATTING DATES #####
@@ -67,16 +65,6 @@ def main(input_dir, dataframe, min_date_cutoff=None, max_date_cutoff=None, count
     print(share, "percent rows duplicated and dropped from", dataframe)
     del before, after, share
     
-    # Output counts of faults per dataframe
-    if counts:
-        ct = pd.DataFrame(data={'dataframe':[dataframe[:-4]], 'all_faults': [len(df)]})
-        # Output
-        if dataframe == 'NGB Blackhawk CY 10.csv': # first year
-            ct.to_csv(os.path.join(output_dir+'\\summary_stats', 'Blackhawk fault counts.csv'), index=False)
-        else: # append additional years
-            ct.to_csv(os.path.join(output_dir+'\\summary_stats', 'Blackhawk fault counts.csv'), index=False, mode='a', header=False)
-        
-    
     # drop nearly completely empty columns
     for x in df.columns:
         if df[x].isnull().mean() >= 0.99:
@@ -101,18 +89,26 @@ def main(input_dir, dataframe, min_date_cutoff=None, max_date_cutoff=None, count
                 if test.isnull().mean() == 1:
                     raise ValueError("\nDate formatting of FDATE and/or CDATE incorrect")
                 else:
-                    df[x] = test # for '%d-%b-%y' format
+                    foo = test # for '%d-%b-%y' format
             else:
-                df[x] = test # for '%d %b %Y' format
+                foo = test # for '%d %b %Y' format
         else:
-            df[x] = test # for '%d-%b-%Y' format
-    del test
+            foo = test # for '%d-%b-%Y' format
+
+        # 2017-2019 new files have different formatting
+        df.loc[foo.notnull(), x + '_mod'] = foo
+        df.loc[foo.isnull(), x + '_mod'] = pd.to_datetime(df[x], format ='%Y-%m-%d %H:%M', errors='coerce')
+        df[x] = df[x + '_mod']
+        del df[x + '_mod']
     
 
     # Check share records missing start and/or end date. Delete those missing start date  
     print("\n\n", df['CDATE'].isnull().mean().round(4), 'proportion records missing CDATE')
     print(df['FDATE'].isnull().mean().round(4), 'proportion records missing FDATE and deleted')
-    df = df.loc[df.FDATE.notnull()] # delete records missing start date
+    print(df['SERNO'].isnull().mean().round(4), 'proportion records missing SERNO and deleted')
+    df = df.loc[(df.FDATE.notnull()) & (df.CDATE.notnull())] # delete records missing start and/or end date
+    df = df.loc[df.FDATE <= df.CDATE]  # if end date before start date, drop. Ignore time inconsistencies for now
+    df = df.loc[df['SERNO'].notnull()] # delete records missing serial number
     
     # Delete records outside desired range
     print("\nEarliest FDATE: '{}'.".format(df['FDATE'].min()))
@@ -131,8 +127,15 @@ def main(input_dir, dataframe, min_date_cutoff=None, max_date_cutoff=None, count
     df.loc[(df['TMMH'] < 0) | (df['TMMH'] > 1000), 'TMMH'] = np.NaN # total man hours can't be thousands or negative
     df['TYPE'].replace('.', np.NaN, inplace=True)
     df['CWUC'] = df['CWUC'].str.replace('\'', '')
-    
-    
+    df['CWUC'] = df['CWUC'].str[:2].replace(['AA', '98', '0'], '00')  # part of aircraft a fault applies to
+    df['CWUC'] = pd.to_numeric(df['CWUC'], errors='coerce')
+    df['CWUC'].fillna(0, inplace=True)
+
+    for col in ['ACHRS', 'CACHRS']:
+        df[col] = df[col].round(0) # round to remove potential human error
+    df.loc[(df['ACHRS'].isnull()) & (df['CACHRS'].notnull()), 'ACHRS'] = df['CACHRS'] # CACHRS (end hrs) more often missing, fill with ACHRS (begin hrs)
+    df.rename(columns={'ACHRS': 'FLT_HRS'}, inplace=True); del df['CACHRS']
+
     ####################################################################
     #####     CREATE FAULT VARIABLE & OUTPUT ALL FAULTS DATASET    #####
     ####################################################################
@@ -152,21 +155,24 @@ def main(input_dir, dataframe, min_date_cutoff=None, max_date_cutoff=None, count
     ####################################################################
     #####    OUTPUT CLEANED INTERMEDIATE ALL FAULTS DATASET        #####
     ####################################################################
+
+    # Where output final product
+    output_dir = os.path.join(r'X:\Pechacek\ARNG Aircraft Readiness\Data\Processed\Master fault data intermediate', os.path.split(input_dir)[-1])
+    output_dir_local = "../data" # save local copy to run faster
     
     # Output intermediate dataset with all faults
     print("\nOutputting all faults of {}".format(dataframe))
     df.to_csv(os.path.join(output_dir, dataframe[:-4] + '_all_faults' + '.csv'), index=False)
+    df.to_csv(os.path.join(output_dir_local, dataframe[:-4] + '_all_faults' + '.csv'), index=False)
     print("Done")
 
 
 if __name__ == "__main__":
     
     
-    min_date_cutoff = '2010-10-01'
-    max_date_cutoff = '2018-09-30'
-    
-    
-    # Blackhawk - note: run in parallel, the rest are not
+    min_date_cutoff = '2010-10-15'
+    max_date_cutoff = '2019-09-15'
+
     input_dir = 'X:/Pechacek/ARNG Aircraft Readiness/Data/Processed/Master fault data unduped/NGB Blackhawk'
     
     files = [i for i in os.listdir(input_dir) if i.lower().endswith('.csv')]
@@ -177,3 +183,7 @@ if __name__ == "__main__":
             main(input_dir, file, min_date_cutoff, max_date_cutoff)
         except:
             print("\nI'm having trouble reading file {}".format(file))
+
+    # New 2017-19 fault data
+    path = r'\\div-sfrd.sfrd.ida.org\public\Pechacek\ARNG Aircraft Readiness\Data\Processed\appended new 2017-2017 fault data from Scott Moyers'
+    main(input_dir=path, dataframe='2017-2019 new fault data.csv', min_date_cutoff='2010-10-15', max_date_cutoff='2019-09-15')

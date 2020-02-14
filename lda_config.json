@@ -1,4 +1,4 @@
 {
-  "iterate_sample": true,
-  "num_topics": 80
+  "iterate_sample": false,
+  "num_topics": 75
 }

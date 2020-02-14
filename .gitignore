@@ -1,4 +1,5 @@
 /Archive/
+/preprocessing/
 .idea/
 .DS_Store
-6_analysis.py
+Archive/6_analysis.py

@@ -150,10 +150,8 @@ if __name__ == '__main__':
     #####    Read data, round fault times, convert long to wide     #####
     #####################################################################
 
-    try:
-        directory = r'C:\Users\jking\Documents\FTS2B\data'
-    except:
-        directory = r'X:\Pechacek\ARNG Aircraft Readiness\Data\Processed\Master fault data intermediate\NGB Blackhawk'
+    directory = r'C:\Users\jking\Documents\FTS2B\data'
+    dir_shared = r'X:\Pechacek\ARNG Aircraft Readiness\Data\Processed\Master fault data intermediate\NGB Blackhawk'
 
     f = pd.read_csv(os.path.join(directory, 'NMC_faults_lda.csv'))
 
@@ -173,6 +171,10 @@ if __name__ == '__main__':
     f['fault_duration'] = (f['fault_end'] - f['fault_bgn']).astype('timedelta64[m]')
     f = f.loc[f.fault_duration > 0].reset_index(drop=True)
     del f['fault_duration']
+
+    # Forward fill missing flight hours
+    f.sort_values(by=['SERNO', 'fault_bgn_hr', 'fault_end_hr'], inplace=True)
+    f['FLT_HRS'] = f.groupby('SERNO')['FLT_HRS'].ffill()
 
     # get long-form version of faults and spells
     long, spells = create_spells(f)
@@ -216,3 +218,4 @@ if __name__ == '__main__':
     ##### Output long form to disk ######
     summary_stats.to_csv(os.path.join(directory+'\\summary_stats', 'fault_stats.csv'), index=False)
     spells.to_csv(os.path.join(directory, 'NMC_spells.csv'), index=False)
+    spells.to_csv(os.path.join(dir_shared, 'NMC_spells.csv'), index=False)

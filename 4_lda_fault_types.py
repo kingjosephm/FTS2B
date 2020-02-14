@@ -14,7 +14,7 @@ Created on Mon Oct  28 13:02:49 2019
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-import os, gensim, json, warnings, pickle, json
+import os, gensim, json, warnings, pickle
 import statsmodels.api as sm
 from collections import defaultdict
 from sklearn.preprocessing import OneHotEncoder
@@ -250,7 +250,6 @@ def diagnostics(df, dom_topics, view_results=False):
     :dom_topics: dictionary of dataframes of length df.shape[0] with a column for dominant category
         of each fault and the contribution of that dominant category.
     '''
-    mse_dict = {}
     aic_dict = {}
     bic_dict = {}
     funct_group = {}
@@ -258,16 +257,15 @@ def diagnostics(df, dom_topics, view_results=False):
     
     # Iterate through each model with diff number of topics
     for z in dom_topics.keys():
-        d = df.copy()
-        d = pd.concat([d, dom_topics[z]], axis=1) # concat column to original df
-        X = pd.DataFrame(OneHotEncoder().fit_transform(d[['dom_topic']]).toarray()[:,1:]) # omit first categ as ref
+        d = pd.concat([df[['fault_dur']].copy(), dom_topics[z]], axis=1) # concat column to original df
+        d.dropna(inplace=True) # ensure no missings
+        X = pd.DataFrame(OneHotEncoder().fit_transform(d[['dom_topic']]).toarray()[:, 1:]) # omit first categ as ref
         X = sm.add_constant(X) # add constant
         y = np.array(d['fault_dur'])
         results = sm.OLS(y, X, missing='drop').fit()
         if view_results:
             print("\nResults using {} topics:\n\n".format(z))
             print(results.summary())
-        mse_dict[z] = np.log(results.mse_model)
         aic_dict[z] = results.aic
         bic_dict[z] = results.bic
     
@@ -275,11 +273,10 @@ def diagnostics(df, dom_topics, view_results=False):
     d = df[['fault_dur', 'CWUC']].copy().loc[df['CWUC'].notnull()]
     y = np.array(d['fault_dur'])
     X = pd.DataFrame(OneHotEncoder().fit_transform(d[['CWUC']].astype(int)).toarray())
-    results = sm.OLS(y, X.iloc[:,:-1], missing='drop').fit()
+    results = sm.OLS(y, X.iloc[:, :-1], missing='drop').fit()
     if view_results:
         print("\nResults using functional categories:\n\n")
         print(results.summary())
-    funct_group['mse'] = np.log(results.mse_model)
     funct_group['aic'] = results.aic
     funct_group['bic'] = results.bic
     
@@ -291,8 +288,8 @@ def diagnostics(df, dom_topics, view_results=False):
     results.summary()
     mean_dict['aic'] = results.aic
     mean_dict['bic'] = results.bic
-    
-    return mse_dict, aic_dict, bic_dict, funct_group, mean_dict
+
+    return aic_dict, bic_dict, funct_group, mean_dict
 
 def uniq_categ(dictionary, cat_col):
     '''
@@ -378,13 +375,12 @@ def read_faults():
     Reads fault data, returns this as Pandas df, as well as string directory path
     '''
 
-    try:
-        directory = r'C:\Users\jking\Documents\FTS2B\data'
-    except:
-        directory = r'X:\Pechacek\ARNG Aircraft Readiness\Data\Processed\Master fault data intermediate\NGB Blackhawk'
+    directory = '../data'
+    dir_shared = r'X:\Pechacek\ARNG Aircraft Readiness\Data\Processed\Master fault data intermediate\NGB Blackhawk'
+
     df = pd.read_csv(os.path.join(directory, 'NMC_faults.csv'))
     df.drop(columns=['ACTION'], inplace=True)
-    return df, directory
+    return df, directory, dir_shared
 
 def iterate_sample():
     '''
@@ -418,46 +414,28 @@ def iterate_sample():
 
     # Predictive power of num topics vs functional groups
     print("\nEstimating diagnostics...")
-    mse, aic, bic, fg, mean_dict = diagnostics(tr, dom_topics=dom_topics)
+    aic, bic, fg, mean_dict = diagnostics(tr, dom_topics=dom_topics)
 
-    fg_mse = []
     fg_aic = []
     fg_bic = []
     mean_aic = []
     mean_bic = []
 
-    for x in mse.keys():
-        fg_mse.append(fg['mse'])
-        fg_aic.append(fg['aic'])
-        fg_bic.append(fg['bic'])
-        mean_aic.append(mean_dict['aic'])
-        mean_bic.append(mean_dict['bic'])
-
-    # Mean squared log error - lower better
-    plt.plot(list(mse.keys()), list(mse.values()), label='LDA')
-    plt.plot(list(mse.keys()), fg_mse, label='fun cat')
-    plt.legend(loc='best')
-    plt.xlabel("Num Topics")
-    plt.ylabel("Mean Sq Log Error")
-    plt.savefig(os.path.join(directory + '\\summary_stats', 'mse_fun_numtopics.png'), dpi=250)
-    plt.close()
-    # Without functional categories
-    plt.plot(list(mse.keys()), list(mse.values()))
-    plt.xlabel("Num Topics")
-    plt.ylabel("Mean Sq Log Error")
-    plt.savefig(os.path.join(directory + '\\summary_stats', 'mse_numtopics.png'), dpi=250)
-    plt.close()
+    fg_aic.append(fg['aic'])
+    fg_bic.append(fg['bic'])
+    mean_aic.append(mean_dict['aic'])
+    mean_bic.append(mean_dict['bic'])
 
     # AIC - lower better
     plt.plot(list(aic.keys()), list(aic.values()), label='LDA')
-    plt.plot(list(aic.keys()), fg_aic, label='fun cat')
+    plt.plot(list(aic.keys()), fg_aic * len(aic.keys()), label='fun cat')
     plt.legend(loc='best')
     plt.xlabel("Num Topics")
     plt.savefig(os.path.join(directory + '\\summary_stats', 'aic_fun_numtopics.png'), dpi=250)
     plt.close()
     # Without functional categories, including mean aic
     plt.plot(list(aic.keys()), list(aic.values()), label='LDA')
-    plt.plot(list(aic.keys()), mean_aic, label='mean')
+    plt.plot(list(aic.keys()), mean_aic * len(aic.keys()), label='mean')
     plt.legend(loc='best')
     plt.xlabel("Num Topics")
     plt.savefig(os.path.join(directory + '\\summary_stats', 'aic_numtopics.png'), dpi=250)
@@ -465,26 +443,25 @@ def iterate_sample():
 
     # BIC - lower better
     plt.plot(list(bic.keys()), list(bic.values()), label='LDA')
-    plt.plot(list(bic.keys()), fg_bic, label='fun cat')
+    plt.plot(list(bic.keys()), fg_bic * len(bic.keys()), label='fun cat')
     plt.legend(loc='best')
     plt.xlabel("Num Topics")
     plt.savefig(os.path.join(directory + '\\summary_stats', 'bic_fun_numtopics.png'), dpi=250)
     plt.close()
     # Without functional categories
     plt.plot(list(bic.keys()), list(bic.values()), label='LDA')
-    plt.plot(list(bic.keys()), mean_bic, label='mean')
+    plt.plot(list(bic.keys()), mean_bic * len(bic.keys()), label='mean')
     plt.legend(loc='best')
     plt.xlabel("Num Topics")
     plt.savefig(os.path.join(directory + '\\summary_stats', 'bic_numtopics.png'), dpi=250)
     plt.close()
 
-    del fg_mse, fg_aic, fg_bic, mean_bic, mean_aic  # clear clutter
+    del fg_aic, fg_bic, mean_bic, mean_aic  # clear clutter
 
     # Save sample diagnostics
     diag = {}
     diag['coherences'] = coherences
     diag['perplexities'] = perplexities
-    diag['mse'] = mse
     diag['bic'] = bic
     diag['aic'] = aic
     diag['funct_group'] = fg
@@ -534,6 +511,7 @@ def population(num_topics):
 
     # Output
     f_.to_csv(os.path.join(directory, 'NMC_faults_lda.csv'), index=False)
+    f_.to_csv(os.path.join(dir_shared, 'NMC_faults_lda.csv'), index=False)
 
     print("\nDone with population dataset")
 
@@ -541,7 +519,7 @@ def population(num_topics):
 if __name__ == '__main__':
 
     # Get faults
-    f, directory = read_faults()
+    f, directory, dir_shared = read_faults()
 
     # Calls externally-created json to specify configurations of this script
     with open('lda_config.json') as j:

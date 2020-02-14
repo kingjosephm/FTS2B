@@ -138,7 +138,7 @@ if __name__ == '__main__':
     
     print("\nDone processing, outputting file to disk")
     final_dir = r'\\div-sfrd.sfrd.ida.org\public\Pechacek\ARNG Aircraft Readiness\Data\Processed\Tables for merge'
-    f.to_csv(os.path.join(final_dir, 'NMC_spells.csv'), index=False)
+    f.to_csv(os.path.join(final_dir, 'NMC_spells_final.csv'), index=False)
     f.to_csv(os.path.join(fault_dir, 'NMC_spells_final.csv'), index=False) # put copy in intermediate directory
     
     
